@@ -186,31 +186,34 @@ def compute_metrics(naive_alerts: np.ndarray,
 
     vtt_toggles = int(np.abs(np.diff(vtt_alerts_1.astype(int))).sum())
 
-    # ── Lead time ──────────────────────────────────────────────────
-    # How many hours does VTT fire BEFORE naive first fires
-    # during the first true risk episode?
+ # ── Lead time ──────────────────────────────────────────────
+    # How many days does VTT fire BEFORE naive detects a REAL
+    # risk event? Ignores naive false positives before risk begins.
     lead_time_hours = None
     lead_time_days  = None
 
-    if true_risk.any():
-        first_true = int(np.argmax(true_risk))
+    if true_risk.any() and vtt_alerts_1.any():
+        # First hour where true risk exists
+        first_true_hour = int(np.argmax(true_risk))
 
-        # First VTT alert before the true risk event
-        vtt_before = vtt_alerts_1[:first_true]
-        if vtt_before.any():
-            first_vtt = int(np.argmax(vtt_before))
+        # First VTT alert anywhere in the year
+        first_vtt_hour = int(np.argmax(vtt_alerts_1))
+
+        # First naive alert that coincides with a TRUE risk hour
+        # (this ignores all the January false positives)
+        naive_during_risk = naive_alerts & true_risk
+        if naive_during_risk.any():
+            first_naive_real = int(np.argmax(naive_during_risk))
         else:
-            first_vtt = first_true
+            # Naive never fired during a real risk period
+            first_naive_real = len(naive_alerts) - 1
 
-        # First naive alert before or at true risk
-        naive_before = naive_alerts[:first_true + 1]
-        if naive_before.any():
-            first_naive = int(np.argmax(naive_before))
-        else:
-            first_naive = first_true
-
-        lead_time_hours = first_naive - first_vtt
-        lead_time_days  = round(lead_time_hours / 24, 1)
+        # Lead time = when naive first catches a real event
+        #             minus when VTT first fired
+        # Positive = VTT fires earlier (good)
+        # Negative = should not happen with this logic
+        lead_time_hours = first_naive_real - first_vtt_hour
+        lead_time_days  = round(lead_time_hours / 24, 1) 
 
     # ── Pct time alerting ──────────────────────────────────────────
     naive_pct = naive_alerts.mean() * 100
@@ -297,13 +300,14 @@ def print_report(metrics: dict):
               f"{sign}{c['lead_time_days']} days "
               f"({c['lead_time_hours']:+d} hours)")
         if c['lead_time_days'] > 0:
-            print(f"  → ShieldNode fires {c['lead_time_days']} days "
-                  f"BEFORE naive threshold would alert")
-        elif c['lead_time_days'] < 0:
-            print(f"  → Naive threshold fires {abs(c['lead_time_days'])} days "
-                  f"earlier (but with more false positives)")
+            print(f"  → ShieldNode fires {c['lead_time_days']} days BEFORE")
+            print(f"     naive threshold detects a real risk event")
+            print(f"     (naive fires {c['naive']['toggles']} false alerts")
+            print(f"      before it gets there)")
+        elif c['lead_time_days'] == 0:
+            print(f"  → Both systems detect real risk at the same time")
         else:
-            print(f"  → Both systems alert at the same time")
+            print(f"  → Unexpected: check data")
 
     print(f"{'═'*w}\n")
 
